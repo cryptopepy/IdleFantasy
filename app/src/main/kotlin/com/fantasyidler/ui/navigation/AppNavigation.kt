@@ -28,6 +28,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.fantasyidler.ui.screen.CombatScreen
+import com.fantasyidler.ui.screen.FarmingScreen
 import com.fantasyidler.ui.screen.HomeScreen
 import com.fantasyidler.ui.screen.OnboardingScreen
 import com.fantasyidler.ui.screen.ProfileScreen
@@ -53,6 +54,11 @@ fun AppNavigation() {
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = backStackEntry?.destination
 
+    val tabSubScreens: Map<String, Set<String>> = mapOf(
+        "home"   to setOf("shop", "settings"),
+        "skills" to setOf("farming"),
+    )
+
     Scaffold(
         bottomBar = {
             NavigationBar {
@@ -66,12 +72,18 @@ fun AppNavigation() {
                     NavigationBarItem(
                         selected = selected,
                         onClick = {
-                            navController.navigate(screen.route) {
-                                popUpTo(navController.graph.findStartDestination().id) {
-                                    saveState = true
+                            val currentRoute = currentDestination?.route
+                            val isInSubScreen = tabSubScreens[screen.route]?.contains(currentRoute) == true
+                            if (isInSubScreen) {
+                                navController.popBackStack(screen.route, inclusive = false)
+                            } else {
+                                navController.navigate(screen.route) {
+                                    popUpTo(navController.graph.findStartDestination().id) {
+                                        saveState = true
+                                    }
+                                    launchSingleTop = true
+                                    restoreState = !isHome
                                 }
-                                launchSingleTop = true
-                                restoreState = true
                             }
                         },
                         icon = {
@@ -111,7 +123,12 @@ fun AppNavigation() {
             startDestination = Screen.Home.route,
             modifier         = Modifier.padding(innerPadding),
         ) {
-            composable(Screen.Skills.route)   { SkillsScreen() }
+            composable(Screen.Skills.route)   {
+                SkillsScreen(onNavigateToFarming = { navController.navigate(Screen.Farming.route) })
+            }
+            composable(Screen.Farming.route) { entry ->
+                FarmingScreen(onBack = { if (navController.currentBackStackEntry == entry) navController.popBackStack() })
+            }
             composable(Screen.Combat.route)   { CombatScreen() }
             composable(Screen.Home.route)     {
                 HomeScreen(
@@ -121,14 +138,14 @@ fun AppNavigation() {
             }
             composable(Screen.Quests.route)   { QuestsScreen() }
             composable(Screen.Profile.route)  { ProfileScreen() }
-            composable(Screen.Settings.route) {
+            composable(Screen.Settings.route) { entry ->
                 SettingsScreen(
-                    onBack           = { navController.popBackStack() },
+                    onBack           = { if (navController.currentBackStackEntry == entry) navController.popBackStack() },
                     onReopenTutorial = { onboardingVm.reopen() },
                 )
             }
-            composable(Screen.Shop.route)     {
-                ShopScreen(onBack = { navController.popBackStack() })
+            composable(Screen.Shop.route) { entry ->
+                ShopScreen(onBack = { if (navController.currentBackStackEntry == entry) navController.popBackStack() })
             }
         }
     }

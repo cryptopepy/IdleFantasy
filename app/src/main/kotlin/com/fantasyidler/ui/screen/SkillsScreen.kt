@@ -15,12 +15,15 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -83,6 +86,7 @@ import com.fantasyidler.ui.viewmodel.SkillsUiState
 import com.fantasyidler.ui.viewmodel.SkillsViewModel
 import com.fantasyidler.ui.viewmodel.xpProgressFraction
 import com.fantasyidler.util.GameStrings
+import com.fantasyidler.util.formatDurationMs
 import com.fantasyidler.util.formatXp
 import com.fantasyidler.util.toCountdown
 import java.util.Locale
@@ -90,6 +94,7 @@ import java.util.Locale
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SkillsScreen(
+    onNavigateToFarming: () -> Unit = {},
     viewModel: SkillsViewModel  = hiltViewModel(),
     craftingViewModel: CraftingViewModel = hiltViewModel(),
 ) {
@@ -147,12 +152,22 @@ fun SkillsScreen(
             // Gathering skills
             item { SectionHeader(stringResource(R.string.label_gathering_skills)) }
             items(Skills.GATHERING) { key ->
+                val efficiency = when (key) {
+                    Skills.MINING      -> state.miningEfficiency
+                    Skills.WOODCUTTING -> state.woodcuttingEfficiency
+                    Skills.FISHING     -> state.fishingEfficiency
+                    else               -> 1.0f
+                }
                 SkillRow(
-                    skillKey = key,
-                    level    = state.skillLevels[key] ?: 1,
-                    xp       = state.skillXp[key] ?: 0L,
-                    isActive = state.activeSession?.skillName == key && state.activeSession?.completed == false,
-                    onClick  = { viewModel.onSkillTapped(key) },
+                    skillKey       = key,
+                    level          = state.skillLevels[key] ?: 1,
+                    xp             = state.skillXp[key] ?: 0L,
+                    isActive       = state.activeSession?.skillName == key && state.activeSession?.completed == false,
+                    onClick        = {
+                        if (key == Skills.FARMING) onNavigateToFarming()
+                        else viewModel.onSkillTapped(key)
+                    },
+                    toolEfficiency = efficiency,
                 )
             }
 
@@ -211,18 +226,20 @@ fun SkillsScreen(
         ) {
             when (sheet) {
                 is SheetState.Mining -> MiningSheet(
-                    ores             = sheet.ores,
-                    isStarting       = state.startingSession,
-                    hasActiveSession = state.anySessionActive,
-                    isQueueFull      = state.queueSize >= 3,
-                    onSelect         = { oreKey -> viewModel.startMiningSession(oreKey) },
+                    ores              = sheet.ores,
+                    isStarting        = state.startingSession,
+                    hasActiveSession  = state.anySessionActive,
+                    isQueueFull       = state.queueSize >= 3,
+                    sessionDurationMs = state.sessionDurationMs,
+                    onSelect          = { oreKey -> viewModel.startMiningSession(oreKey) },
                 )
                 is SheetState.Woodcutting -> WoodcuttingSheet(
-                    trees            = sheet.trees,
-                    isStarting       = state.startingSession,
-                    hasActiveSession = state.anySessionActive,
-                    isQueueFull      = state.queueSize >= 3,
-                    onSelect         = { treeKey -> viewModel.startWoodcuttingSession(treeKey) },
+                    trees             = sheet.trees,
+                    isStarting        = state.startingSession,
+                    hasActiveSession  = state.anySessionActive,
+                    isQueueFull       = state.queueSize >= 3,
+                    sessionDurationMs = state.sessionDurationMs,
+                    onSelect          = { treeKey -> viewModel.startWoodcuttingSession(treeKey) },
                 )
                 SheetState.Fishing -> FishingSheet(
                     state            = state,
@@ -232,35 +249,39 @@ fun SkillsScreen(
                     onStart          = viewModel::startFishingSession,
                 )
                 is SheetState.Agility -> AgilitySheet(
-                    courses          = sheet.courses,
-                    isStarting       = state.startingSession,
-                    hasActiveSession = state.anySessionActive,
-                    isQueueFull      = state.queueSize >= 3,
-                    onSelect         = { courseKey -> viewModel.startAgilitySession(courseKey) },
+                    courses           = sheet.courses,
+                    isStarting        = state.startingSession,
+                    hasActiveSession  = state.anySessionActive,
+                    isQueueFull       = state.queueSize >= 3,
+                    sessionDurationMs = state.sessionDurationMs,
+                    onSelect          = { courseKey -> viewModel.startAgilitySession(courseKey) },
                 )
                 is SheetState.Firemaking -> FiremakingSheet(
-                    availableLogs    = sheet.availableLogs,
-                    isStarting       = state.startingSession,
-                    hasActiveSession = state.anySessionActive,
-                    isQueueFull      = state.queueSize >= 3,
-                    onSelect         = { logKey -> viewModel.startFiremakingSession(logKey) },
-                    context          = context,
+                    availableLogs     = sheet.availableLogs,
+                    isStarting        = state.startingSession,
+                    hasActiveSession  = state.anySessionActive,
+                    isQueueFull       = state.queueSize >= 3,
+                    sessionDurationMs = state.sessionDurationMs,
+                    onSelect          = { logKey -> viewModel.startFiremakingSession(logKey) },
+                    context           = context,
                 )
                 is SheetState.Runecrafting -> RunecraftingSheet(
-                    sheet            = sheet,
-                    isStarting       = state.startingSession,
-                    hasActiveSession = state.anySessionActive,
-                    isQueueFull      = state.queueSize >= 3,
-                    onStart          = viewModel::startRunecraftingSession,
+                    sheet             = sheet,
+                    isStarting        = state.startingSession,
+                    hasActiveSession  = state.anySessionActive,
+                    isQueueFull       = state.queueSize >= 3,
+                    sessionDurationMs = state.sessionDurationMs,
+                    onStart           = viewModel::startRunecraftingSession,
                 )
                 is SheetState.Prayer -> PrayerSheet(
-                    availableBones   = sheet.availableBones,
-                    inventory        = sheet.inventory,
-                    prayerLevel      = state.skillLevels[Skills.PRAYER] ?: 1,
-                    isStarting       = state.startingSession,
-                    hasActiveSession = state.anySessionActive,
-                    isQueueFull      = state.queueSize >= 3,
-                    onStart          = viewModel::startPrayerSession,
+                    availableBones    = sheet.availableBones,
+                    inventory         = sheet.inventory,
+                    prayerLevel       = state.skillLevels[Skills.PRAYER] ?: 1,
+                    isStarting        = state.startingSession,
+                    hasActiveSession  = state.anySessionActive,
+                    isQueueFull       = state.queueSize >= 3,
+                    sessionDurationMs = state.sessionDurationMs,
+                    onStart           = viewModel::startPrayerSession,
                 )
                 is SheetState.Crafting -> {
                     val craftState by craftingViewModel.uiState.collectAsState()
@@ -270,6 +291,7 @@ fun SkillsScreen(
                         craftingViewModel = craftingViewModel,
                         hasActiveSession  = state.anySessionActive,
                         isQueueFull       = state.queueSize >= 3,
+                        sessionDurationMs = state.sessionDurationMs,
                         context           = context,
                         onDismiss         = {
                             viewModel.dismissSheet()
@@ -371,6 +393,7 @@ private fun SkillRow(
     xp: Long,
     isActive: Boolean,
     onClick: () -> Unit,
+    toolEfficiency: Float = 1.0f,
 ) {
     val context  = LocalContext.current
     val name     = GameStrings.skillName(context, skillKey)
@@ -451,6 +474,14 @@ private fun SkillRow(
                     .clip(RoundedCornerShape(2.dp)),
                 color    = GoldPrimary,
             )
+            if (toolEfficiency > 1.0f) {
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text  = stringResource(R.string.skills_tool_bonus, "%.2f".format(toolEfficiency)),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
         }
     }
 }
@@ -482,15 +513,31 @@ private fun MiningSheet(
     isStarting: Boolean,
     hasActiveSession: Boolean,
     isQueueFull: Boolean,
+    sessionDurationMs: Long,
     onSelect: (String) -> Unit,
 ) {
     val context = LocalContext.current
+    var selectedKey by remember { mutableStateOf<String?>(null) }
     Column(Modifier.padding(bottom = 24.dp)) {
         Text(
             text     = stringResource(R.string.label_choose_activity),
             style    = MaterialTheme.typography.titleMedium,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
         )
+        Text(
+            text     = stringResource(R.string.skill_mining_desc),
+            style    = MaterialTheme.typography.bodySmall,
+            color    = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 4.dp),
+        )
+        if (sessionDurationMs > 0) {
+            Text(
+                text     = stringResource(R.string.skills_session_duration, sessionDurationMs / 60_000),
+                style    = MaterialTheme.typography.bodySmall,
+                color    = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
+            )
+        }
         HorizontalDivider()
         Column(Modifier.verticalScroll(rememberScrollState())) {
             ores.entries
@@ -498,14 +545,26 @@ private fun MiningSheet(
                 .forEach { (key, ore) ->
                     ActivityRow(
                         name             = GameStrings.itemName(context, key),
-                        detail           = "Lv. ${ore.levelRequired}  •  ${ore.xpPerOre} XP/ore",
+                        detail           = stringResource(R.string.skills_level_req_xp, ore.levelRequired, ore.xpPerOre),
                         isStarting       = isStarting,
                         hasActiveSession = hasActiveSession,
                         isQueueFull      = isQueueFull,
-                        onClick          = { onSelect(key) },
+                        onClick          = { selectedKey = key },
                     )
                 }
         }
+    }
+    selectedKey?.let { key ->
+        val ore = ores[key] ?: return@let
+        ActivityDetailDialog(
+            name             = GameStrings.itemName(context, key),
+            detail           = stringResource(R.string.skills_level_req_xp, ore.levelRequired, ore.xpPerOre),
+            description      = GameStrings.itemDesc(context, key),
+            hasActiveSession = hasActiveSession,
+            isQueueFull      = isQueueFull,
+            onConfirm        = { onSelect(key) },
+            onDismiss        = { selectedKey = null },
+        )
     }
 }
 
@@ -515,15 +574,31 @@ private fun WoodcuttingSheet(
     isStarting: Boolean,
     hasActiveSession: Boolean,
     isQueueFull: Boolean,
+    sessionDurationMs: Long,
     onSelect: (String) -> Unit,
 ) {
     val context = LocalContext.current
+    var selectedKey by remember { mutableStateOf<String?>(null) }
     Column(Modifier.padding(bottom = 24.dp)) {
         Text(
             text     = stringResource(R.string.label_choose_activity),
             style    = MaterialTheme.typography.titleMedium,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
         )
+        Text(
+            text     = stringResource(R.string.skill_woodcutting_desc),
+            style    = MaterialTheme.typography.bodySmall,
+            color    = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 4.dp),
+        )
+        if (sessionDurationMs > 0) {
+            Text(
+                text     = stringResource(R.string.skills_session_duration, sessionDurationMs / 60_000),
+                style    = MaterialTheme.typography.bodySmall,
+                color    = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
+            )
+        }
         HorizontalDivider()
         Column(Modifier.verticalScroll(rememberScrollState())) {
             trees.entries
@@ -531,14 +606,26 @@ private fun WoodcuttingSheet(
                 .forEach { (key, tree) ->
                     ActivityRow(
                         name             = GameStrings.itemName(context, tree.logName),
-                        detail           = "Lv. ${tree.levelRequired}  •  ${tree.xpPerLog} XP/log",
+                        detail           = stringResource(R.string.skills_log_desc, tree.levelRequired, tree.xpPerLog),
                         isStarting       = isStarting,
                         hasActiveSession = hasActiveSession,
                         isQueueFull      = isQueueFull,
-                        onClick          = { onSelect(key) },
+                        onClick          = { selectedKey = key },
                     )
                 }
         }
+    }
+    selectedKey?.let { key ->
+        val tree = trees[key] ?: return@let
+        ActivityDetailDialog(
+            name             = GameStrings.itemName(context, tree.logName),
+            detail           = stringResource(R.string.skills_log_desc, tree.levelRequired, tree.xpPerLog),
+            description      = GameStrings.itemDesc(context, tree.logName),
+            hasActiveSession = hasActiveSession,
+            isQueueFull      = isQueueFull,
+            onConfirm        = { onSelect(key) },
+            onDismiss        = { selectedKey = null },
+        )
     }
 }
 
@@ -563,10 +650,24 @@ private fun FishingSheet(
         )
         Spacer(Modifier.height(4.dp))
         Text(
-            text  = "Level $fishLevel  •  Level-appropriate catches",
+            text  = stringResource(R.string.skill_fishing_desc),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text  = stringResource(R.string.skills_fishing_desc, fishLevel),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        if (state.sessionDurationMs > 0) {
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text  = stringResource(R.string.skills_session_duration, state.sessionDurationMs / 60_000),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         Spacer(Modifier.height(16.dp))
         Button(
             onClick  = onStart,
@@ -576,7 +677,7 @@ private fun FishingSheet(
             if (isStarting) {
                 CircularProgressIndicator(Modifier.size(20.dp))
             } else {
-                Text(if (hasActiveSession) "Add to Session Queue" else stringResource(R.string.btn_start_session))
+                Text(if (hasActiveSession) stringResource(R.string.skills_add_to_queue) else stringResource(R.string.btn_start_session))
             }
         }
     }
@@ -628,13 +729,50 @@ private fun ActivityRow(
             CircularProgressIndicator(modifier = Modifier.size(20.dp))
         } else {
             Text(
-                text  = if (hasActiveSession) "Add to Session Queue" else stringResource(R.string.btn_start_session),
+                text  = if (hasActiveSession) stringResource(R.string.skills_add_to_queue) else stringResource(R.string.btn_start_session),
                 style = MaterialTheme.typography.labelMedium,
                 color = if (queueBlocked) MaterialTheme.colorScheme.onSurfaceVariant else GoldPrimary,
             )
         }
     }
     HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+}
+
+@Composable
+private fun ActivityDetailDialog(
+    name: String,
+    detail: String,
+    description: String,
+    hasActiveSession: Boolean,
+    isQueueFull: Boolean,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val queueBlocked = hasActiveSession && isQueueFull
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(name) },
+        text = {
+            Column {
+                Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (description.isNotBlank()) {
+                    Spacer(Modifier.height(12.dp))
+                    Text(description, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onConfirm(); onDismiss() },
+                enabled = !queueBlocked,
+            ) {
+                Text(if (hasActiveSession) stringResource(R.string.skills_add_queue_short) else stringResource(R.string.btn_start_session))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.btn_cancel)) }
+        },
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -647,14 +785,31 @@ private fun AgilitySheet(
     isStarting: Boolean,
     hasActiveSession: Boolean,
     isQueueFull: Boolean,
+    sessionDurationMs: Long,
     onSelect: (String) -> Unit,
 ) {
+    val context = LocalContext.current
+    var selectedKey by remember { mutableStateOf<String?>(null) }
     Column(Modifier.padding(bottom = 24.dp)) {
         Text(
             text     = stringResource(R.string.label_choose_activity),
             style    = MaterialTheme.typography.titleMedium,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
         )
+        Text(
+            text     = stringResource(R.string.skill_agility_desc),
+            style    = MaterialTheme.typography.bodySmall,
+            color    = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 4.dp),
+        )
+        if (sessionDurationMs > 0) {
+            Text(
+                text     = stringResource(R.string.skills_session_duration, sessionDurationMs / 60_000),
+                style    = MaterialTheme.typography.bodySmall,
+                color    = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
+            )
+        }
         HorizontalDivider()
         Column(Modifier.verticalScroll(rememberScrollState())) {
             courses.entries
@@ -666,10 +821,22 @@ private fun AgilitySheet(
                         isStarting       = isStarting,
                         hasActiveSession = hasActiveSession,
                         isQueueFull      = isQueueFull,
-                        onClick          = { onSelect(key) },
+                        onClick          = { selectedKey = key },
                     )
                 }
         }
+    }
+    selectedKey?.let { key ->
+        val course = courses[key] ?: return@let
+        ActivityDetailDialog(
+            name             = course.displayName,
+            detail           = "Lv. ${course.levelRequired}  •  ${course.xpPerSuccess} XP/lap",
+            description      = GameStrings.agilityCourseDesc(context, key),
+            hasActiveSession = hasActiveSession,
+            isQueueFull      = isQueueFull,
+            onConfirm        = { onSelect(key) },
+            onDismiss        = { selectedKey = null },
+        )
     }
 }
 
@@ -683,15 +850,31 @@ private fun FiremakingSheet(
     isStarting: Boolean,
     hasActiveSession: Boolean,
     isQueueFull: Boolean,
+    sessionDurationMs: Long,
     onSelect: (String) -> Unit,
     context: android.content.Context,
 ) {
+    var selectedKey by remember { mutableStateOf<String?>(null) }
     Column(Modifier.padding(bottom = 24.dp)) {
         Text(
             text     = stringResource(R.string.label_choose_activity),
             style    = MaterialTheme.typography.titleMedium,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
         )
+        Text(
+            text     = stringResource(R.string.skill_firemaking_desc),
+            style    = MaterialTheme.typography.bodySmall,
+            color    = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 4.dp),
+        )
+        if (sessionDurationMs > 0) {
+            Text(
+                text     = stringResource(R.string.skills_session_duration, sessionDurationMs / 60_000),
+                style    = MaterialTheme.typography.bodySmall,
+                color    = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
+            )
+        }
         HorizontalDivider()
         if (availableLogs.isEmpty()) {
             Box(
@@ -699,7 +882,7 @@ private fun FiremakingSheet(
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    text  = "No logs in inventory",
+                    text  = stringResource(R.string.skills_no_logs),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -711,15 +894,27 @@ private fun FiremakingSheet(
                     .forEach { (key, log) ->
                         ActivityRow(
                             name             = GameStrings.itemName(context, key),
-                            detail           = "Lv. ${log.levelRequired}  •  ${log.xpPerLog} XP/log",
+                            detail           = stringResource(R.string.skills_log_desc, log.levelRequired, log.xpPerLog),
                             isStarting       = isStarting,
                             hasActiveSession = hasActiveSession,
                             isQueueFull      = isQueueFull,
-                            onClick          = { onSelect(key) },
+                            onClick          = { selectedKey = key },
                         )
                     }
             }
         }
+    }
+    selectedKey?.let { key ->
+        val log = availableLogs[key] ?: return@let
+        ActivityDetailDialog(
+            name             = GameStrings.itemName(context, key),
+            detail           = stringResource(R.string.skills_log_desc, log.levelRequired, log.xpPerLog),
+            description      = GameStrings.itemDesc(context, key),
+            hasActiveSession = hasActiveSession,
+            isQueueFull      = isQueueFull,
+            onConfirm        = { onSelect(key) },
+            onDismiss        = { selectedKey = null },
+        )
     }
 }
 
@@ -735,6 +930,7 @@ private fun PrayerSheet(
     isStarting: Boolean,
     hasActiveSession: Boolean,
     isQueueFull: Boolean,
+    sessionDurationMs: Long,
     onStart: (boneKey: String, qty: Int) -> Unit,
 ) {
     var selectedKey by remember { mutableStateOf<String?>(null) }
@@ -750,12 +946,18 @@ private fun PrayerSheet(
             style    = MaterialTheme.typography.titleMedium,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
         )
+        Text(
+            text     = stringResource(R.string.skill_prayer_desc),
+            style    = MaterialTheme.typography.bodySmall,
+            color    = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 4.dp),
+        )
         HorizontalDivider()
 
         if (selectedBone == null) {
             // ── Bone selection ───────────────────────────────────────────
             Text(
-                text     = "Level $prayerLevel  •  Select bones to bury",
+                text     = stringResource(R.string.skills_prayer_desc, prayerLevel),
                 style    = MaterialTheme.typography.bodySmall,
                 color    = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
@@ -766,7 +968,7 @@ private fun PrayerSheet(
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
-                        text  = "No bones in inventory",
+                        text  = stringResource(R.string.skills_no_bones),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -785,7 +987,7 @@ private fun PrayerSheet(
                         Column(Modifier.weight(1f)) {
                             Text(bone.displayName, style = MaterialTheme.typography.bodyLarge)
                             Text(
-                                text  = "${bone.xpPerBone.toInt()} XP each  •  $qty in inventory",
+                                text  = stringResource(R.string.skills_bone_qty, bone.xpPerBone.toInt(), qty),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -812,7 +1014,7 @@ private fun PrayerSheet(
                 modifier = Modifier.padding(horizontal = 16.dp),
             )
             Text(
-                text     = "${selectedBone.xpPerBone.toInt()} XP each  •  $maxQty available",
+                text     = stringResource(R.string.skills_bone_selected, selectedBone.xpPerBone.toInt(), maxQty),
                 style    = MaterialTheme.typography.bodySmall,
                 color    = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
@@ -859,12 +1061,20 @@ private fun PrayerSheet(
             }
 
             Text(
-                text     = "+${(qty * selectedBone.xpPerBone).toInt()} XP total",
+                text     = stringResource(R.string.skills_xp_total, (qty * selectedBone.xpPerBone).toInt()),
                 style    = MaterialTheme.typography.bodyMedium,
                 color    = GoldPrimary,
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             )
+            if (sessionDurationMs > 0) {
+                Text(
+                    text     = "~${(qty.toLong() * (sessionDurationMs / 60)).formatDurationMs()}",
+                    style    = MaterialTheme.typography.bodySmall,
+                    color    = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
+                )
+            }
 
             Button(
                 onClick  = { onStart(selectedKey!!, qty) },
@@ -874,7 +1084,7 @@ private fun PrayerSheet(
                     .padding(horizontal = 16.dp),
             ) {
                 if (isStarting) CircularProgressIndicator(Modifier.size(20.dp))
-                else Text(if (hasActiveSession) "Add to Session Queue" else stringResource(R.string.btn_start_burying))
+                else Text(if (hasActiveSession) stringResource(R.string.skills_add_to_queue) else stringResource(R.string.btn_start_burying))
             }
         }
     }
@@ -890,6 +1100,7 @@ private fun RunecraftingSheet(
     isStarting: Boolean,
     hasActiveSession: Boolean,
     isQueueFull: Boolean,
+    sessionDurationMs: Long,
     onStart: (String, Int) -> Unit,
 ) {
     var selectedKey by remember { mutableStateOf<String?>(null) }
@@ -908,7 +1119,13 @@ private fun RunecraftingSheet(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
             )
             Text(
-                text     = "${sheet.essenceQty} Rune Essence in inventory",
+                text     = stringResource(R.string.skill_runecrafting_desc),
+                style    = MaterialTheme.typography.bodySmall,
+                color    = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 4.dp),
+            )
+            Text(
+                text     = stringResource(R.string.skills_essence_qty, sheet.essenceQty),
                 style    = MaterialTheme.typography.bodySmall,
                 color    = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
@@ -920,7 +1137,7 @@ private fun RunecraftingSheet(
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
-                        text  = "No rune types unlocked yet",
+                        text  = stringResource(R.string.skills_no_runes),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -931,7 +1148,7 @@ private fun RunecraftingSheet(
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
-                        text  = "No Rune Essence in inventory — mine some first",
+                        text  = stringResource(R.string.skills_no_essence),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -949,7 +1166,7 @@ private fun RunecraftingSheet(
                         Column(Modifier.weight(1f)) {
                             Text(rune.displayName, style = MaterialTheme.typography.bodyLarge)
                             Text(
-                                text  = "${rune.xpPerRune.toInt()} XP/rune  •  Lv. ${rune.levelRequired}",
+                                text  = stringResource(R.string.skills_rune_desc, rune.xpPerRune.toInt(), rune.levelRequired),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -980,7 +1197,7 @@ private fun RunecraftingSheet(
                 modifier = Modifier.padding(horizontal = 16.dp),
             )
             Text(
-                text     = "${selectedRune.xpPerRune.toInt()} XP/rune  •  $maxQty essence available",
+                text     = stringResource(R.string.skills_rune_selected, selectedRune.xpPerRune.toInt(), maxQty),
                 style    = MaterialTheme.typography.bodySmall,
                 color    = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
@@ -1027,12 +1244,20 @@ private fun RunecraftingSheet(
             }
 
             Text(
-                text       = "+${(qty * selectedRune.xpPerRune).toInt()} XP total",
+                text       = stringResource(R.string.skills_xp_total, (qty * selectedRune.xpPerRune).toInt()),
                 style      = MaterialTheme.typography.bodyMedium,
                 color      = GoldPrimary,
                 fontWeight = FontWeight.SemiBold,
                 modifier   = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             )
+            if (sessionDurationMs > 0) {
+                Text(
+                    text     = "~${(qty.toLong() * (sessionDurationMs / 60)).formatDurationMs()}",
+                    style    = MaterialTheme.typography.bodySmall,
+                    color    = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
+                )
+            }
 
             Button(
                 onClick  = { onStart(selectedKey!!, qty) },
@@ -1042,7 +1267,7 @@ private fun RunecraftingSheet(
                     .padding(horizontal = 16.dp),
             ) {
                 if (isStarting) CircularProgressIndicator(Modifier.size(20.dp))
-                else Text(if (hasActiveSession) "Add to Session Queue" else stringResource(R.string.btn_start_crafting))
+                else Text(if (hasActiveSession) stringResource(R.string.skills_add_to_queue) else stringResource(R.string.btn_start_crafting))
             }
         }
     }
@@ -1093,7 +1318,7 @@ private fun SessionResultSheet(
             )
             result.levelUps.forEach { lvl ->
                 Text(
-                    text  = "  Level $lvl reached!",
+                    text  = "  " + stringResource(R.string.skills_level_reached, lvl),
                     style = MaterialTheme.typography.bodyMedium,
                     color = GoldPrimary,
                     fontWeight = FontWeight.SemiBold,
@@ -1150,6 +1375,7 @@ private fun CraftSkillSheet(
     craftingViewModel: CraftingViewModel,
     hasActiveSession: Boolean,
     isQueueFull: Boolean,
+    sessionDurationMs: Long,
     context: android.content.Context,
     onDismiss: () -> Unit,
 ) {
@@ -1157,27 +1383,42 @@ private fun CraftSkillSheet(
         Skills.SMITHING  -> craftingViewModel.smithingRecipes
         Skills.COOKING   -> craftingViewModel.cookingRecipes
         Skills.FLETCHING -> craftingViewModel.fletchingRecipes
+        Skills.HERBLORE  -> craftingViewModel.herbloreRecipes
         else             -> craftingViewModel.jewelleryRecipes
     }
 
-    var onlyCraftable by remember { mutableStateOf(false) }
-    val recipes = if (onlyCraftable)
-        allRecipes.filter { craftState.meetsLevel(it) && craftState.maxCraftable(it) > 0 }
-    else
-        allRecipes
+    var onlyCraftable    by remember { mutableStateOf(false) }
+    var selectedCategory by remember { mutableStateOf<String?>(null) }
+    var selectedTier     by remember { mutableStateOf<String?>(null) }
+
+    val categories = remember(allRecipes) {
+        allRecipes.map { it.category }.filter { it.isNotEmpty() }.distinct().sorted()
+    }
+    val categoryFiltered = if (selectedCategory == null) allRecipes
+                           else allRecipes.filter { it.category == selectedCategory }
+    val tiers = remember(categoryFiltered) {
+        categoryFiltered.map { it.tier }.filter { it.isNotEmpty() }.distinct().sorted()
+    }
+    val recipes = categoryFiltered
+        .filter { selectedTier == null || it.tier == selectedTier }
+        .let { list ->
+            if (onlyCraftable) list.filter { craftState.meetsLevel(it) && craftState.maxCraftable(it) > 0 }
+            else list
+        }
 
     val selected = craftState.selectedRecipe
 
     if (selected != null) {
         CraftQuantityContent(
-            recipe           = selected,
-            state            = craftState,
-            hasActiveSession = hasActiveSession,
-            isQueueFull      = isQueueFull,
-            context          = context,
-            onSetQuantity    = { craftingViewModel.setQuantity(it, craftState.maxCraftable(selected)) },
-            onCraft          = craftingViewModel::craft,
-            onBack           = craftingViewModel::dismissRecipe,
+            recipe            = selected,
+            state             = craftState,
+            hasActiveSession  = hasActiveSession,
+            isQueueFull       = isQueueFull,
+            sessionDurationMs = sessionDurationMs,
+            context           = context,
+            onSetQuantity     = { craftingViewModel.setQuantity(it, craftState.maxCraftable(selected)) },
+            onCraft           = craftingViewModel::craft,
+            onBack            = craftingViewModel::dismissRecipe,
         )
     } else {
         Column(
@@ -1197,7 +1438,7 @@ private fun CraftSkillSheet(
                     modifier = Modifier.weight(1f),
                 )
                 Text(
-                    text  = "Only craftable",
+                    text  = stringResource(R.string.skills_only_craftable),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1208,13 +1449,66 @@ private fun CraftSkillSheet(
                 )
             }
             HorizontalDivider()
+            Text(
+                text     = GameStrings.skillDesc(context, skillName),
+                style    = MaterialTheme.typography.bodySmall,
+                color    = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 4.dp),
+            )
+            if (categories.size > 1) {
+                Row(
+                    modifier            = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 12.dp, vertical = 2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    FilterChip(
+                        selected  = selectedCategory == null,
+                        onClick   = { selectedCategory = null; selectedTier = null },
+                        label     = { Text(stringResource(R.string.skills_filter_all)) },
+                    )
+                    categories.forEach { cat ->
+                        FilterChip(
+                            selected  = selectedCategory == cat,
+                            onClick   = {
+                                selectedCategory = if (selectedCategory == cat) null else cat
+                                selectedTier = null
+                            },
+                            label     = { Text(cat) },
+                        )
+                    }
+                }
+            }
+            if (tiers.size > 1) {
+                Row(
+                    modifier            = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 12.dp, vertical = 2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    FilterChip(
+                        selected  = selectedTier == null,
+                        onClick   = { selectedTier = null },
+                        label     = { Text(stringResource(R.string.skills_filter_all)) },
+                    )
+                    tiers.forEach { tier ->
+                        FilterChip(
+                            selected  = selectedTier == tier,
+                            onClick   = { selectedTier = if (selectedTier == tier) null else tier },
+                            label     = { Text(tier) },
+                        )
+                    }
+                }
+            }
             LazyColumn(Modifier.fillMaxWidth()) {
                 items(recipes) { recipe ->
                     CraftRecipeRow(
-                        recipe    = recipe,
+                        recipe     = recipe,
                         craftState = craftState,
-                        context   = context,
-                        onTap     = { craftingViewModel.openRecipe(recipe) },
+                        context    = context,
+                        onTap      = { craftingViewModel.openRecipe(recipe) },
                     )
                 }
                 item { Spacer(Modifier.height(8.dp)) }
@@ -1257,6 +1551,40 @@ private fun CraftRecipeRow(
                 style = MaterialTheme.typography.bodySmall,
                 color = if (enabled) MaterialTheme.colorScheme.onSurfaceVariant else dim,
             )
+            val statParts = buildList {
+                if (recipe.outputAttackBonus   > 0) add("+${recipe.outputAttackBonus} Atk")
+                if (recipe.outputStrengthBonus > 0) add("+${recipe.outputStrengthBonus} Str")
+                if (recipe.outputDefenseBonus  > 0) add("+${recipe.outputDefenseBonus} Def")
+                if (recipe.outputHealingValue  > 0) add("Heals ${recipe.outputHealingValue} HP")
+                if (recipe.outputDamage        > 0) add("+${recipe.outputDamage} dmg")
+            }
+            if (statParts.isNotEmpty()) {
+                Text(
+                    text  = statParts.joinToString("  "),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (enabled) MaterialTheme.colorScheme.onSurfaceVariant else dim,
+                )
+            }
+            if (recipe.effects.isNotEmpty()) {
+                Text(
+                    text  = recipe.effects.entries.joinToString("  ") { (stat, bonus) ->
+                        "+$bonus ${stat.replaceFirstChar { it.uppercase() }}"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (enabled) MaterialTheme.colorScheme.primary else dim,
+                )
+            }
+            if (recipe.outputRequirements.isNotEmpty()) {
+                recipe.outputRequirements.forEach { (skill, lvl) ->
+                    val have       = craftState.skillLevels[skill] ?: 1
+                    val skillLabel = GameStrings.skillName(context, skill)
+                    Text(
+                        text  = stringResource(R.string.skills_req_with_have, lvl, skillLabel, have, skillLabel),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (have >= lvl) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
         }
         Column(horizontalAlignment = Alignment.End) {
             when {
@@ -1295,6 +1623,7 @@ private fun CraftQuantityContent(
     state: CraftingUiState,
     hasActiveSession: Boolean,
     isQueueFull: Boolean,
+    sessionDurationMs: Long,
     context: android.content.Context,
     onSetQuantity: (Int) -> Unit,
     onCraft: () -> Unit,
@@ -1311,7 +1640,7 @@ private fun CraftQuantityContent(
             .padding(horizontal = 24.dp)
             .padding(bottom = 40.dp),
     ) {
-        TextButton(onClick = onBack) { Text("← Back") }
+        TextButton(onClick = onBack) { Text(stringResource(R.string.btn_back_arrow)) }
         Text(
             text       = recipe.displayName,
             style      = MaterialTheme.typography.titleLarge,
@@ -1380,18 +1709,26 @@ private fun CraftQuantityContent(
             }
         }
         Text(
-            text     = "+${totalXp.toInt()} XP total",
+            text     = stringResource(R.string.skills_xp_total, totalXp.toInt()),
             style    = MaterialTheme.typography.bodySmall,
             color    = GoldPrimary,
             modifier = Modifier.align(Alignment.CenterHorizontally),
         )
+        if (sessionDurationMs > 0) {
+            Text(
+                text     = "~${(qty.toLong() * (sessionDurationMs / 60)).formatDurationMs()}",
+                style    = MaterialTheme.typography.bodySmall,
+                color    = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.align(Alignment.CenterHorizontally),
+            )
+        }
         Spacer(Modifier.height(20.dp))
         Button(
             onClick  = onCraft,
             enabled  = !(hasActiveSession && isQueueFull),
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Text(if (hasActiveSession) "Add to Session Queue" else stringResource(R.string.btn_craft))
+            Text(if (hasActiveSession) stringResource(R.string.skills_add_to_queue) else stringResource(R.string.btn_craft))
         }
     }
 }

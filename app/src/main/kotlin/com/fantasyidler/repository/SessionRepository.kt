@@ -19,6 +19,7 @@ class SessionRepository @Inject constructor(
     @ApplicationContext private val context: Context,
 ) {
     val activeSessionFlow: Flow<SkillSession?> = sessionDao.observeActiveSession()
+    val completedCountFlow: Flow<Int> = sessionDao.observeCompletedCount()
 
     suspend fun getActiveSession(): SkillSession? = sessionDao.getActiveSession()
 
@@ -37,6 +38,7 @@ class SessionRepository @Inject constructor(
         frames: String,
         durationMs: Long = SESSION_DURATION_MS,
         skillDisplayName: String,
+        alarmOffsetMs: Long? = null,
     ): SkillSession {
         val now = System.currentTimeMillis()
         val session = SkillSession(
@@ -48,7 +50,8 @@ class SessionRepository @Inject constructor(
             activityKey = activityKey,
         )
         sessionDao.insert(session)
-        scheduleAlarm(session.sessionId, session.endsAt, skillDisplayName)
+        val alarmAt = if (alarmOffsetMs != null) now + alarmOffsetMs else session.endsAt
+        scheduleAlarm(session.sessionId, alarmAt, skillDisplayName)
         return session
     }
 
@@ -71,6 +74,9 @@ class SessionRepository @Inject constructor(
 
     suspend fun getAllCompletedSessions(): List<SkillSession> =
         sessionDao.getAllCompletedSessions()
+
+    suspend fun getOldestCompletedSession(): SkillSession? =
+        sessionDao.getOldestCompletedSession()
 
     // ------------------------------------------------------------------
 

@@ -18,6 +18,7 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.FantasyIdler"
         android:enableOnBackInvokedCallback="true"
+        android:localeConfig="@xml/locales_config"
         tools:targetApi="33">
 
         <activity
@@ -33,6 +34,10 @@
 
         <receiver
             android:name=".receiver.SessionAlarmReceiver"
+            android:exported="false" />
+
+        <receiver
+            android:name=".receiver.FarmPatchAlarmReceiver"
             android:exported="false" />
 
     </application>

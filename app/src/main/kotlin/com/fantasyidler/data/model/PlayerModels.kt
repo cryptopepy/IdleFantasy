@@ -24,6 +24,9 @@ data class PlayerFlags(
     @SerialName("character_setup_done") val characterSetupDone: Boolean = false,
     /** Up to 3 queued sessions to auto-start after the current one completes. */
     @SerialName("session_queue") val sessionQueue: List<QueuedAction> = emptyList(),
+    @SerialName("last_seen_version_code") val lastSeenVersionCode: Int = 0,
+    /** "dark" | "light" | "system". Defaults to "dark" to preserve existing behaviour. */
+    @SerialName("theme_preference") val themePreference: String = "dark",
 )
 
 /** A session to be started when the current one completes. */
@@ -75,9 +78,10 @@ object EquipSlot {
     const val PICKAXE     = "pickaxe"
     const val AXE         = "axe"
     const val FISHING_ROD = "fishing_rod"
+    const val HOE         = "hoe"
 
     val COMBAT_SLOTS = listOf(WEAPON, HEAD, BODY, LEGS, BOOTS, CAPE, RING, NECKLACE, SHIELD)
-    val TOOL_SLOTS   = listOf(PICKAXE, AXE, FISHING_ROD)
+    val TOOL_SLOTS   = listOf(PICKAXE, AXE, FISHING_ROD, HOE)
     val ALL          = COMBAT_SLOTS + TOOL_SLOTS
 }
 
@@ -100,6 +104,7 @@ object Skills {
     const val FLETCHING    = "fletching"
     const val CRAFTING     = "crafting"
     const val RUNECRAFTING = "runecrafting"
+    const val HERBLORE     = "herblore"
 
     // Combat
     const val ATTACK    = "attack"
@@ -110,8 +115,8 @@ object Skills {
     const val HITPOINTS = "hitpoints"
     const val PRAYER    = "prayer"
 
-    val GATHERING = listOf(MINING, FISHING, WOODCUTTING, FIREMAKING, AGILITY)
-    val CRAFTING_SKILLS = listOf(SMITHING, COOKING, FLETCHING, CRAFTING, RUNECRAFTING)
+    val GATHERING = listOf(MINING, FISHING, WOODCUTTING, FARMING, FIREMAKING, AGILITY)
+    val CRAFTING_SKILLS = listOf(SMITHING, COOKING, FLETCHING, CRAFTING, RUNECRAFTING, HERBLORE)
     val COMBAT = listOf(ATTACK, STRENGTH, DEFENSE, RANGED, MAGIC, HITPOINTS, PRAYER)
     val ALL = GATHERING + CRAFTING_SKILLS + COMBAT
 

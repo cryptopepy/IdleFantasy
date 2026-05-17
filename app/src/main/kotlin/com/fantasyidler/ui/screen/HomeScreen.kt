@@ -44,6 +44,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -61,6 +62,7 @@ import com.fantasyidler.util.GameStrings
 import com.fantasyidler.util.formatCoins
 import com.fantasyidler.util.toCountdown
 import kotlinx.coroutines.delay
+import kotlinx.serialization.decodeFromString
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -97,7 +99,7 @@ fun HomeScreen(
                 ) {
                     if (summary.died) {
                         Text(
-                            text  = "You died and lost most of your gains.",
+                            text  = stringResource(R.string.home_died_message),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error,
                         )
@@ -105,7 +107,7 @@ fun HomeScreen(
                     }
                     if (summary.boostWasActive) {
                         Text(
-                            text  = "2× XP Boost was active",
+                            text  = stringResource(R.string.home_xp_boost_was_active),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.Bold,
@@ -113,19 +115,19 @@ fun HomeScreen(
                         Spacer(Modifier.height(4.dp))
                     }
                     if (summary.xpLines.isNotEmpty()) {
-                        SummarySection("XP Gained")
+                        SummarySection(stringResource(R.string.label_xp_gained))
                         summary.xpLines.forEach { (skill, label) -> SummaryRow(skill, label) }
                     } else if (summary.totalXpLabel.isNotEmpty()) {
-                        SummaryRow("XP Gained", summary.totalXpLabel)
+                        SummaryRow(stringResource(R.string.label_xp_gained), summary.totalXpLabel)
                     }
                     if (summary.killLines.isNotEmpty()) {
                         Spacer(Modifier.height(4.dp))
-                        SummarySection("Kills")
+                        SummarySection(stringResource(R.string.label_kills))
                         summary.killLines.forEach { (enemy, kills) -> SummaryRow(enemy, kills) }
                     }
                     if (summary.itemLines.isNotEmpty()) {
                         Spacer(Modifier.height(4.dp))
-                        SummarySection("Loot")
+                        SummarySection(stringResource(R.string.home_loot))
                         summary.itemLines.forEach { (item, qty) -> SummaryRow(item, qty) }
                     }
                     if (summary.coinsGained > 0) {
@@ -133,20 +135,42 @@ fun HomeScreen(
                     }
                     if (summary.foodConsumedLines.isNotEmpty()) {
                         Spacer(Modifier.height(4.dp))
-                        SummarySection("Food Consumed")
+                        SummarySection(stringResource(R.string.home_food_consumed))
                         summary.foodConsumedLines.forEach { (food, qty) -> SummaryRow(food, qty) }
                     }
                     if (summary.boneBuriedLabel.isNotEmpty()) {
-                        SummaryRow("Bones buried", summary.boneBuriedLabel)
+                        SummaryRow(stringResource(R.string.home_bones_buried), summary.boneBuriedLabel)
                     }
                 }
             },
             confirmButton = {
                 Button(onClick = viewModel::summaryConsumed) {
-                    Text("Close")
+                    Text(stringResource(R.string.btn_close))
                 }
             },
         )
+    }
+
+    if (!state.isLoading && state.showWhatsNew) {
+        val context = LocalContext.current
+        val changelogText = remember {
+            runCatching { context.assets.open("changelog.txt").bufferedReader().readText().trim() }.getOrElse { "" }
+        }
+        if (changelogText.isNotEmpty()) {
+            AlertDialog(
+                onDismissRequest = viewModel::dismissWhatsNew,
+                title = { Text(stringResource(R.string.home_whats_new)) },
+                text  = {
+                    Text(
+                        text  = changelogText,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = viewModel::dismissWhatsNew) { Text(stringResource(R.string.home_got_it)) }
+                },
+            )
+        }
     }
 
     if (!state.isLoading && !state.characterSetupDone) {
@@ -163,7 +187,7 @@ fun HomeScreen(
                 title   = { Text(stringResource(R.string.app_name)) },
                 actions = {
                     IconButton(onClick = onNavigateToSettings) {
-                        Icon(Icons.Filled.Settings, contentDescription = "Settings")
+                        Icon(Icons.Filled.Settings, contentDescription = stringResource(R.string.settings_title))
                     }
                 },
             )
@@ -189,7 +213,7 @@ fun HomeScreen(
         ) {
             // ── Greeting ────────────────────────────────────────────────
             Text(
-                text       = "Welcome back, ${state.characterName.ifBlank { "Adventurer" }}!",
+                text       = stringResource(R.string.home_welcome, state.characterName.ifBlank { stringResource(R.string.home_adventurer) }),
                 style      = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold,
             )
@@ -266,10 +290,16 @@ fun HomeScreen(
             // ── Active session card ──────────────────────────────────────
             val session = state.activeSession
             if (session != null) {
+                if (!session.completed) {
+                    LaunchedEffect(session.sessionId) {
+                        val remaining = session.endsAt - System.currentTimeMillis()
+                        if (remaining > 0) delay(remaining)
+                        viewModel.onSessionExpiredLocally(session.sessionId)
+                    }
+                }
                 HomeSessionCard(
                     session       = session,
                     context       = context,
-                    onCollect     = viewModel::collectSession,
                     onAbandon     = viewModel::abandonSession,
                     onDebugFinish = viewModel::debugFinishSession,
                 )
@@ -296,6 +326,17 @@ fun HomeScreen(
                 }
             }
 
+            // ── Collect button ───────────────────────────────────────────
+            if (state.pendingCollectCount > 0) {
+                val n = state.pendingCollectCount
+                Button(
+                    onClick  = viewModel::collectSession,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(pluralStringResource(R.plurals.plural_collect_sessions, n, n))
+                }
+            }
+
             // ── Queue card ───────────────────────────────────────────────
             if (state.sessionQueue.isNotEmpty()) {
                 QueueCard(
@@ -316,7 +357,6 @@ fun HomeScreen(
 private fun HomeSessionCard(
     session: SkillSession,
     context: android.content.Context,
-    onCollect: () -> Unit,
     onAbandon: () -> Unit,
     onDebugFinish: () -> Unit,
 ) {
@@ -382,13 +422,6 @@ private fun HomeSessionCard(
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
             Spacer(Modifier.height(8.dp))
 
-            if (isDone) {
-                Button(onClick = onCollect, modifier = Modifier.fillMaxWidth()) {
-                    Text(stringResource(R.string.btn_collect_results))
-                }
-                Spacer(Modifier.height(4.dp))
-            }
-
             Row {
                 OutlinedButton(onClick = onAbandon) {
                     Text(stringResource(R.string.btn_abandon))
@@ -421,7 +454,7 @@ private fun QueueCard(
     ) {
         Column(Modifier.padding(16.dp)) {
             Text(
-                text  = "Up Next (${queue.size}/3)",
+                text  = stringResource(R.string.home_up_next, queue.size),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

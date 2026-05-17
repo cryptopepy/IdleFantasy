@@ -2,6 +2,7 @@ package com.fantasyidler.ui.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.fantasyidler.BuildConfig
 import com.fantasyidler.data.model.PlayerFlags
 import com.fantasyidler.data.model.QueuedAction
 import com.fantasyidler.data.model.SessionFrame
@@ -55,11 +56,13 @@ data class HomeUiState(
     val skillLevels: Map<String, Int> = emptyMap(),
     val skillXp: Map<String, Long> = emptyMap(),
     val activeSession: SkillSession? = null,
+    val pendingCollectCount: Int = 0,
     val snackbarMessage: String? = null,
     val sessionSummary: SessionSummary? = null,
     val characterSetupDone: Boolean = false,
     val characterName: String = "",
     val sessionQueue: List<QueuedAction> = emptyList(),
+    val showWhatsNew: Boolean = false,
 )
 
 @HiltViewModel
@@ -77,20 +80,23 @@ class HomeViewModel @Inject constructor(
     val uiState: StateFlow<HomeUiState> = combine(
         playerRepo.playerFlow,
         sessionRepo.activeSessionFlow,
+        sessionRepo.completedCountFlow,
         _extra,
-    ) { player, session, extra ->
-        if (player == null) extra.copy(isLoading = true, activeSession = session)
+    ) { player, session, completedCount, extra ->
+        if (player == null) extra.copy(isLoading = true, activeSession = session, pendingCollectCount = completedCount)
         else {
             val flags: PlayerFlags = json.decodeFromString(player.flags)
             extra.copy(
-                isLoading          = false,
-                coins              = player.coins,
-                skillLevels        = json.decodeFromString(player.skillLevels),
-                skillXp            = json.decodeFromString(player.skillXp),
-                activeSession      = session,
-                characterSetupDone = flags.characterSetupDone,
-                characterName      = flags.characterName,
-                sessionQueue       = flags.sessionQueue,
+                isLoading           = false,
+                coins               = player.coins,
+                skillLevels         = json.decodeFromString(player.skillLevels),
+                skillXp             = json.decodeFromString(player.skillXp),
+                activeSession       = session,
+                pendingCollectCount = completedCount,
+                characterSetupDone  = flags.characterSetupDone,
+                characterName       = flags.characterName,
+                sessionQueue        = flags.sessionQueue,
+                showWhatsNew        = flags.lastSeenVersionCode < BuildConfig.VERSION_CODE,
             )
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HomeUiState())
@@ -101,10 +107,11 @@ class HomeViewModel @Inject constructor(
 
     fun collectSession() {
         viewModelScope.launch {
-            val latest = sessionRepo.getActiveSession() ?: return@launch
-            if (!latest.completed && System.currentTimeMillis() < latest.endsAt) return@launch
-            // If timed out but alarm hasn't fired yet, mark completed so it shows up in the query
-            if (!latest.completed) sessionRepo.markCompleted(latest.sessionId)
+            // If the latest session timed out but its alarm hasn't fired yet, mark it completed now.
+            val latest = sessionRepo.getActiveSession()
+            if (latest != null && !latest.completed && System.currentTimeMillis() >= latest.endsAt) {
+                sessionRepo.markCompleted(latest.sessionId)
+            }
 
             val sessions = sessionRepo.getAllCompletedSessions()
             if (sessions.isEmpty()) return@launch
@@ -180,7 +187,13 @@ class HomeViewModel @Inject constructor(
                                 petMessage = "You found a pet: ${pd.displayName}!"
                         }
                         if (!died) {
-                            questRepo.recordCombat(session.activityKey, kills, loot, detectCombatStyle(xpPerSkill))
+                            questRepo.recordCombat(
+                                dungeonKey         = session.activityKey,
+                                killsByEnemy       = kills,
+                                loot               = loot,
+                                combatStyle        = detectCombatStyle(xpPerSkill),
+                                foodConsumedTotal  = food.values.sum(),
+                            )
                         }
                         if (food.isNotEmpty()) playerRepo.consumeItems(food)
                         for ((skill, xp) in xpPerSkill) combinedXpBySkill[skill] = (combinedXpBySkill[skill] ?: 0L) + xp
@@ -201,6 +214,24 @@ class HomeViewModel @Inject constructor(
                             in craftingSkills  -> questRepo.recordCrafting(session.skillName, regular)
                             Skills.PRAYER      -> questRepo.recordBuried(frames.sumOf { it.kills })
                         }
+                        // Consume input materials at collect time (best-effort, like food)
+                        when (session.skillName) {
+                            Skills.PRAYER -> playerRepo.consumeItems(mapOf(session.activityKey to frames.size))
+                            Skills.RUNECRAFTING -> {
+                                val rune = gameData.runes[session.activityKey]
+                                if (rune != null) playerRepo.consumeItems(mapOf("rune_essence" to rune.essenceCost * frames.size))
+                            }
+                            in craftingSkills -> {
+                                val mats = when (session.skillName) {
+                                    Skills.SMITHING  -> gameData.smithingRecipes[session.activityKey]?.materials
+                                    Skills.COOKING   -> gameData.cookingRecipes[session.activityKey]?.let { mapOf(it.rawItem to 1) }
+                                    Skills.FLETCHING -> gameData.fletchingRecipes[session.activityKey]?.materials
+                                    Skills.CRAFTING  -> gameData.craftingRecipes[session.activityKey]?.materials
+                                    else             -> null
+                                }
+                                if (mats != null) playerRepo.consumeItems(mats.mapValues { (_, needed) -> needed * frames.size })
+                            }
+                        }
                         for ((id, _) in pets) {
                             val pd = gameData.pets[id] ?: continue
                             if (playerRepo.addPetIfNew(id, pd.boostPercent))
@@ -220,7 +251,7 @@ class HomeViewModel @Inject constructor(
             for (session in sessions) sessionRepo.deleteSession(session.sessionId)
 
             // ── Build summary ─────────────────────────────────────────────
-            val n = sessions.size
+            val n    = sessions.size
             val last = sessions.last()
 
             val title = when {
@@ -265,10 +296,21 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    fun onSessionExpiredLocally(sessionId: String) {
+        viewModelScope.launch {
+            val session = sessionRepo.getSession(sessionId) ?: return@launch
+            if (!session.completed) {
+                sessionRepo.markCompleted(sessionId)
+                queuedSessionStarter.startNextQueued()
+            }
+        }
+    }
+
     fun abandonSession() {
         viewModelScope.launch {
             val session = sessionRepo.getActiveSession() ?: return@launch
             sessionRepo.abandonSession(session.sessionId)
+            queuedSessionStarter.startNextQueued()
         }
     }
 
@@ -293,6 +335,12 @@ class HomeViewModel @Inject constructor(
 
     fun summaryConsumed() = _extra.update { it.copy(sessionSummary = null) }
     fun snackbarConsumed() = _extra.update { it.copy(snackbarMessage = null) }
+
+    fun dismissWhatsNew() {
+        viewModelScope.launch {
+            playerRepo.markWhatsNewSeen(BuildConfig.VERSION_CODE)
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

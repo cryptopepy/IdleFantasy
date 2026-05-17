@@ -32,10 +32,10 @@ class QuestRepository @Inject constructor(
             when (quest.type) {
                 "gather" -> {
                     val count = items[quest.target] ?: continue
-                    if (count > 0) addProgress(questId, quest.amount, count)
+                    if (count > 0) addProgress(questId, quest.amount, count, quest.requiresPrevious)
                 }
                 "gather_any" -> {
-                    if (totalGathered > 0) addProgress(questId, quest.amount, totalGathered)
+                    if (totalGathered > 0) addProgress(questId, quest.amount, totalGathered, quest.requiresPrevious)
                 }
             }
         }
@@ -56,10 +56,10 @@ class QuestRepository @Inject constructor(
             when (quest.type) {
                 "craft" -> {
                     val count = items[quest.target] ?: continue
-                    if (count > 0) addProgress(questId, quest.amount, count)
+                    if (count > 0) addProgress(questId, quest.amount, count, quest.requiresPrevious)
                 }
                 "craft_any" -> {
-                    if (totalCrafted > 0) addProgress(questId, quest.amount, totalCrafted)
+                    if (totalCrafted > 0) addProgress(questId, quest.amount, totalCrafted, quest.requiresPrevious)
                 }
             }
         }
@@ -78,36 +78,41 @@ class QuestRepository @Inject constructor(
         killsByEnemy: Map<String, Int>,
         loot: Map<String, Int>,
         combatStyle: String = "",
+        foodConsumedTotal: Int = 0,
     ) {
         val totalKills = killsByEnemy.values.sum()
 
         for ((questId, quest) in gameData.quests) {
             when (quest.type) {
                 "kill" -> {
-                    if (totalKills > 0) addProgress(questId, quest.amount, totalKills)
+                    if (totalKills > 0) addProgress(questId, quest.amount, totalKills, quest.requiresPrevious)
                 }
                 "kill_enemy" -> {
                     val count = killsByEnemy[quest.target] ?: continue
-                    if (count > 0) addProgress(questId, quest.amount, count)
+                    if (count > 0) addProgress(questId, quest.amount, count, quest.requiresPrevious)
                 }
                 "dungeon" -> {
-                    if (quest.target == dungeonKey) addProgress(questId, quest.amount, 1)
+                    if (quest.target == dungeonKey) addProgress(questId, quest.amount, 1, quest.requiresPrevious)
                 }
                 "dungeon_melee_only" -> {
                     if (quest.target == dungeonKey && combatStyle == "melee")
-                        addProgress(questId, quest.amount, 1)
+                        addProgress(questId, quest.amount, 1, quest.requiresPrevious)
                 }
                 "dungeon_ranged_only" -> {
                     if (quest.target == dungeonKey && combatStyle == "ranged")
-                        addProgress(questId, quest.amount, 1)
+                        addProgress(questId, quest.amount, 1, quest.requiresPrevious)
                 }
                 "dungeon_magic_only" -> {
                     if (quest.target == dungeonKey && combatStyle == "magic")
-                        addProgress(questId, quest.amount, 1)
+                        addProgress(questId, quest.amount, 1, quest.requiresPrevious)
+                }
+                "dungeon_no_food" -> {
+                    if (quest.target == dungeonKey && foodConsumedTotal == 0)
+                        addProgress(questId, quest.amount, 1, quest.requiresPrevious)
                 }
                 "collect" -> {
                     val count = loot[quest.target] ?: continue
-                    if (count > 0) addProgress(questId, quest.amount, count)
+                    if (count > 0) addProgress(questId, quest.amount, count, quest.requiresPrevious)
                 }
             }
         }
@@ -123,24 +128,33 @@ class QuestRepository @Inject constructor(
 
         for ((questId, quest) in gameData.quests) {
             if (quest.type == "prayer") {
-                addProgress(questId, quest.amount, amount)
+                addProgress(questId, quest.amount, amount, quest.requiresPrevious)
             }
         }
     }
 
     /**
-     * Marks a quest as reward-claimed. Returns the [QuestRewards] if it was claimable;
-     * null otherwise.
-     *
-     * Claimable = progress >= quest.amount && !completed && prerequisite completed
+     * Result of an attempted reward claim. [Success] carries the rewards;
+     * [BlockedByPrerequisite] tells the caller which quest still needs to be claimed first
+     * so the UI can name it in a snackbar; [NotReady] covers progress-too-low,
+     * already-completed, and unknown-quest cases.
      */
-    suspend fun claimReward(questId: String): QuestRewards? {
-        val quest = gameData.quests[questId] ?: return null
-        val current = questProgressDao.getQuestProgress(questId) ?: return null
+    sealed class ClaimResult {
+        data class Success(val rewards: QuestRewards) : ClaimResult()
+        data class BlockedByPrerequisite(val prerequisiteId: String) : ClaimResult()
+        object NotReady : ClaimResult()
+    }
 
-        if (current.completed) return null
-        if (current.progress < quest.amount) return null
-        if (!isPrerequisiteDone(quest.requiresPrevious)) return null
+    suspend fun claimReward(questId: String): ClaimResult {
+        val quest = gameData.quests[questId] ?: return ClaimResult.NotReady
+        val current = questProgressDao.getQuestProgress(questId) ?: return ClaimResult.NotReady
+
+        if (current.completed) return ClaimResult.NotReady
+        if (current.progress < quest.amount) return ClaimResult.NotReady
+        val prereq = quest.requiresPrevious
+        if (prereq != null && !isPrerequisiteDone(prereq)) {
+            return ClaimResult.BlockedByPrerequisite(prereq)
+        }
 
         questProgressDao.upsert(
             current.copy(
@@ -148,28 +162,20 @@ class QuestRepository @Inject constructor(
                 completedAt = System.currentTimeMillis(),
             )
         )
-        return quest.rewards
+        return ClaimResult.Success(quest.rewards)
     }
 
     // ---------------------------------------------------------------------------
     // Private helpers
     // ---------------------------------------------------------------------------
 
-    /**
-     * Adds [delta] to the stored progress for [questId], creating a row if absent.
-     * Skips already-completed quests and quests whose prerequisite isn't done yet.
-     */
+    /** Adds [delta] to the stored progress for [questId], creating a row if absent. Skips already-completed quests. */
     suspend fun resetAllProgress() = questProgressDao.deleteAll()
 
-    private suspend fun addProgress(questId: String, requiredAmount: Int, delta: Int) {
-        val quest = gameData.quests[questId] ?: return
-        if (!isPrerequisiteDone(quest.requiresPrevious)) return
-
-        val current = questProgressDao.getQuestProgress(questId)
-            ?: QuestProgress(questId)
-
+    private suspend fun addProgress(questId: String, requiredAmount: Int, delta: Int, requiresPrevious: String?) {
+        if (!isPrerequisiteDone(requiresPrevious)) return
+        val current = questProgressDao.getQuestProgress(questId) ?: QuestProgress(questId)
         if (current.completed) return
-
         questProgressDao.upsert(current.copy(progress = current.progress + delta))
     }
 

@@ -87,12 +87,11 @@ class ShopViewModel @Inject constructor(
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ShopUiState())
 
     // ------------------------------------------------------------------
-    // Buy catalogue (all marketplace items except seeds + XP boost)
+    // Buy catalogue (all marketplace items except XP boost)
     // ------------------------------------------------------------------
 
     val buyEntries: List<ShopEntry> by lazy {
         val regular = gameData.marketplace
-            .filterKeys { it != "seeds" }
             .flatMap { (_, cat) ->
                 cat.items.map { (key, item) ->
                     ShopEntry(
@@ -227,7 +226,14 @@ class ShopViewModel @Inject constructor(
     }
 
     fun openSell(itemKey: String, displayName: String) {
-        val have      = uiState.value.inventory[itemKey] ?: 0
+        val state        = uiState.value
+        val have         = state.inventory[itemKey] ?: 0
+        val equippedCount = state.equipped.values.count { it == itemKey }
+        val sellable     = (have - equippedCount).coerceAtLeast(0)
+        if (sellable == 0) {
+            _extra.update { it.copy(snackbarMessage = "$displayName is equipped — unequip it first to sell.") }
+            return
+        }
         val sellPrice = sellPriceFor(itemKey)
         _extra.update {
             it.copy(
@@ -235,8 +241,8 @@ class ShopViewModel @Inject constructor(
                     key         = itemKey,
                     displayName = displayName,
                     priceEach   = sellPrice,
-                    maxQty      = have,
-                    qty         = have,
+                    maxQty      = sellable,
+                    qty         = sellable,
                     isBuy       = false,
                 )
             )
@@ -291,10 +297,31 @@ class ShopViewModel @Inject constructor(
     // Private helpers
     // ------------------------------------------------------------------
 
+    fun sellCategoryFor(itemKey: String): String {
+        val equip = gameData.equipment[itemKey]
+        if (equip != null) {
+            return when (equip.slot) {
+                EquipSlot.WEAPON                                      -> "Weapons"
+                EquipSlot.PICKAXE, EquipSlot.AXE, EquipSlot.FISHING_ROD -> "Tools"
+                else                                                  -> "Armor"
+            }
+        }
+        if (itemKey in gameData.foodHealValues) return "Food"
+        return when {
+            "ore"     in itemKey || "bar"     in itemKey ||
+            "gem"     in itemKey || "log"     in itemKey ||
+            "bone"    in itemKey || "essence" in itemKey ||
+            "arrow"   in itemKey || "raw_"    in itemKey ||
+            "cooked"  in itemKey              -> "Materials"
+            else                              -> "Misc"
+        }
+    }
+
     private fun scoreFor(item: com.fantasyidler.data.json.EquipmentData, slot: String): Float = when (slot) {
         EquipSlot.PICKAXE     -> item.miningEfficiency ?: 0f
         EquipSlot.AXE         -> item.woodcuttingEfficiency ?: 0f
         EquipSlot.FISHING_ROD -> item.fishingEfficiency ?: 0f
+        EquipSlot.HOE         -> item.farmingEfficiency ?: 0f
         else                  -> (item.attackBonus + item.strengthBonus + item.defenseBonus).toFloat()
     }
 

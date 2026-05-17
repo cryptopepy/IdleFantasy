@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.fantasyidler.data.json.BossData
 import com.fantasyidler.data.json.DungeonData
+import com.fantasyidler.data.json.EnemyData
 import com.fantasyidler.data.json.EquipmentData
 import com.fantasyidler.data.json.SpellData
 import com.fantasyidler.data.model.EquipSlot
@@ -60,6 +61,15 @@ data class CombatUiState(
     val startingSession: Boolean = false,
     val snackbarMessage: String? = null,
     val combatResult: CombatSessionResult? = null,
+    val totalAttackBonus: Int = 0,
+    val totalStrengthBonus: Int = 0,
+    val totalDefenseBonus: Int = 0,
+    val dungeonSurvivalRatings: Map<String, CombatSimulator.SurvivalRating> = emptyMap(),
+    val noFoodWarningPending: Boolean = false,
+    val pendingDungeonKey: String? = null,
+    val equippedFood: Map<String, Int> = emptyMap(),
+    val selectedPotionKey: String? = null,
+    val availablePotions: Map<String, Int> = emptyMap(),
 )
 
 // ---------------------------------------------------------------------------
@@ -93,14 +103,41 @@ class CombatViewModel @Inject constructor(
             val inventory: Map<String, Int>    = json.decodeFromString(player.inventory)
             val weaponKey     = equipped[EquipSlot.WEAPON]
             val equippedWeapon = weaponKey?.let { gameData.equipment[it] }
+            val flags: PlayerFlags         = try { json.decodeFromString(player.flags) } catch (_: Exception) { PlayerFlags() }
+            val totalAtk = EquipSlot.COMBAT_SLOTS.sumOf { gameData.equipment[equipped[it]]?.attackBonus  ?: 0 }
+            val totalStr = EquipSlot.COMBAT_SLOTS.sumOf { gameData.equipment[equipped[it]]?.strengthBonus ?: 0 }
+            val totalDef = EquipSlot.COMBAT_SLOTS.sumOf { gameData.equipment[equipped[it]]?.defenseBonus  ?: 0 }
+            val defenceLevel  = levels[Skills.DEFENSE]   ?: 1
+            val hpLevel       = levels[Skills.HITPOINTS] ?: 1
+            val totalFoodHeal = flags.equippedFood.keys.sumOf { key ->
+                (inventory[key] ?: 0) * (gameData.foodHealValues[key] ?: 0)
+            }
+            val survivalRatings = gameData.dungeons.mapValues { (_, dungeon) ->
+                CombatSimulator.estimateSurvival(
+                    dungeon       = dungeon,
+                    enemies       = gameData.enemies,
+                    playerDefence = defenceLevel + totalDef,
+                    playerHp      = hpLevel,
+                    totalFoodHeal = totalFoodHeal,
+                )
+            }
             extra.copy(
-                isLoading      = false,
-                skillLevels    = levels,
-                skillXp        = xpMap,
-                equipped       = equipped,
-                inventory      = inventory,
-                equippedWeapon = equippedWeapon,
-                combatSession  = combatSession,
+                isLoading               = false,
+                skillLevels             = levels,
+                skillXp                 = xpMap,
+                equipped                = equipped,
+                inventory               = inventory,
+                equippedWeapon          = equippedWeapon,
+                combatSession           = combatSession,
+                totalAttackBonus        = totalAtk,
+                totalStrengthBonus      = totalStr,
+                totalDefenseBonus       = totalDef,
+                dungeonSurvivalRatings  = survivalRatings,
+                equippedFood            = flags.equippedFood.keys
+                    .associateWith { inventory[it] ?: 0 }
+                    .filter { (_, qty) -> qty > 0 },
+                availablePotions        = inventory.filterKeys { it in gameData.potionEffects }
+                    .filter { (_, qty) -> qty > 0 },
             )
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), CombatUiState())
@@ -112,6 +149,10 @@ class CombatViewModel @Inject constructor(
     val bossList: List<BossData> by lazy {
         gameData.bosses.values.sortedBy { it.combatLevelRequired }
     }
+
+    val enemyMap: Map<String, EnemyData> by lazy { gameData.enemies }
+
+    val foodHealValues: Map<String, Int> by lazy { gameData.foodHealValues }
 
     // ------------------------------------------------------------------
     // Dungeon selection
@@ -126,6 +167,9 @@ class CombatViewModel @Inject constructor(
     fun selectSpell(spell: SpellData?) =
         _extra.update { it.copy(selectedSpell = spell) }
 
+    fun selectPotion(key: String?) =
+        _extra.update { it.copy(selectedPotionKey = key) }
+
     /** Returns spells available at the player's current magic level. */
     fun availableSpells(skillLevels: Map<String, Int>): List<SpellData> {
         val magicLevel = skillLevels[Skills.MAGIC] ?: 1
@@ -138,7 +182,7 @@ class CombatViewModel @Inject constructor(
     // Session start
     // ------------------------------------------------------------------
 
-    fun startDungeonSession(dungeonKey: String) {
+    fun startDungeonSession(dungeonKey: String, bypassFoodWarning: Boolean = false) {
         viewModelScope.launch {
             if (sessionRepo.getActiveSession() != null) {
                 val dungeonName = gameData.dungeons[dungeonKey]?.displayName ?: dungeonKey
@@ -150,6 +194,16 @@ class CombatViewModel @Inject constructor(
                     )
                 }
                 return@launch
+            }
+
+            if (!bypassFoodWarning) {
+                val p   = playerRepo.getOrCreatePlayer()
+                val f: PlayerFlags      = try { json.decodeFromString(p.flags) } catch (_: Exception) { PlayerFlags() }
+                val inv: Map<String, Int> = json.decodeFromString(p.inventory)
+                if (f.equippedFood.keys.none { (inv[it] ?: 0) > 0 }) {
+                    _extra.update { it.copy(noFoodWarningPending = true, pendingDungeonKey = dungeonKey) }
+                    return@launch
+                }
             }
 
             _extra.update { it.copy(startingSession = true, selectedDungeon = null) }
@@ -168,6 +222,10 @@ class CombatViewModel @Inject constructor(
                     "strength" -> "strength"
                     else       -> "attack"
                 }
+
+                val totalAttackBonus   = EquipSlot.COMBAT_SLOTS.sumOf { gameData.equipment[equipped[it]]?.attackBonus  ?: 0 }
+                val totalStrengthBonus = EquipSlot.COMBAT_SLOTS.sumOf { gameData.equipment[equipped[it]]?.strengthBonus ?: 0 }
+                val totalDefenseBonus  = EquipSlot.COMBAT_SLOTS.sumOf { gameData.equipment[equipped[it]]?.defenseBonus  ?: 0 }
 
                 // Ranged: find best arrow in inventory
                 val bestArrow = ARROW_TIERS.firstOrNull { (inventory[it] ?: 0) > 0 }
@@ -200,15 +258,22 @@ class CombatViewModel @Inject constructor(
                 val availableFood      = inventory.filterKeys { it in equippedFoodKeys }
                 val foodHealValues     = gameData.foodHealValues
 
+                // Potion: consume immediately on dungeon start, pass bonuses to simulator
+                val potionKey     = _extra.value.selectedPotionKey
+                val potionBonuses = if (potionKey != null && (inventory[potionKey] ?: 0) > 0) {
+                    playerRepo.consumeItems(mapOf(potionKey to 1))
+                    gameData.potionEffects[potionKey] ?: emptyMap()
+                } else emptyMap()
+
                 val result = CombatSimulator.simulateDungeon(
                     dungeon             = dungeon,
                     enemies             = gameData.enemies,
                     playerAttack        = levels[Skills.ATTACK]    ?: 1,
                     playerStrength      = levels[Skills.STRENGTH]  ?: 1,
-                    playerDefence       = levels[Skills.DEFENSE]   ?: 1,
+                    playerDefence       = (levels[Skills.DEFENSE]  ?: 1) + totalDefenseBonus,
                     playerHp            = levels[Skills.HITPOINTS] ?: 1,
-                    weaponAttackBonus   = weapon?.attackBonus      ?: 0,
-                    weaponStrengthBonus = weapon?.strengthBonus    ?: 0,
+                    weaponAttackBonus   = totalAttackBonus,
+                    weaponStrengthBonus = totalStrengthBonus,
                     combatStyle         = combatStyle,
                     playerRanged        = levels[Skills.RANGED]    ?: 1,
                     playerMagic         = levels[Skills.MAGIC]     ?: 1,
@@ -218,6 +283,7 @@ class CombatViewModel @Inject constructor(
                     petBoostPct         = petBoostFor(player.pets),
                     equippedFood        = availableFood,
                     foodHealValues      = foodHealValues,
+                    potionBonuses       = potionBonuses,
                 )
 
                 val totalKills = result.frames.sumOf { it.kills }
@@ -250,17 +316,23 @@ class CombatViewModel @Inject constructor(
                     json.serializersModule.serializer<List<SessionFrame>>(),
                     result.frames,
                 )
+                val deathFrameIdx = result.frames.indexOfFirst { it.died }
+                val alarmOffsetMs = if (deathFrameIdx >= 0) {
+                    val perFrameMs = result.durationMs / 60L
+                    perFrameMs * (deathFrameIdx + 1)
+                } else null
                 sessionRepo.startSession(
                     skillName        = "combat",
                     activityKey      = dungeonKey,
                     frames           = framesJson,
                     durationMs       = result.durationMs,
                     skillDisplayName = dungeon.displayName,
+                    alarmOffsetMs    = alarmOffsetMs,
                 )
             } catch (e: Exception) {
                 _extra.update { it.copy(snackbarMessage = "Failed to start session: ${e.message}") }
             } finally {
-                _extra.update { it.copy(startingSession = false) }
+                _extra.update { it.copy(startingSession = false, selectedPotionKey = null) }
             }
         }
     }
@@ -282,18 +354,27 @@ class CombatViewModel @Inject constructor(
             try {
                 val boss    = gameData.bosses[bossKey] ?: error("Unknown boss: $bossKey")
                 val player  = playerRepo.getOrCreatePlayer()
-                val levels: Map<String, Int>    = json.decodeFromString(player.skillLevels)
+                val levels: Map<String, Int>       = json.decodeFromString(player.skillLevels)
                 val equipped: Map<String, String?> = json.decodeFromString(player.equipped)
-                val weapon  = equipped[EquipSlot.WEAPON]?.let { gameData.equipment[it] }
+                val inventory: Map<String, Int>    = json.decodeFromString(player.inventory)
+                val totalAtkBonus = EquipSlot.COMBAT_SLOTS.sumOf { gameData.equipment[equipped[it]]?.attackBonus  ?: 0 }
+                val totalStrBonus = EquipSlot.COMBAT_SLOTS.sumOf { gameData.equipment[equipped[it]]?.strengthBonus ?: 0 }
+                val totalDefBonus = EquipSlot.COMBAT_SLOTS.sumOf { gameData.equipment[equipped[it]]?.defenseBonus  ?: 0 }
+
+                val potionKey     = _extra.value.selectedPotionKey
+                val potionBonuses = if (potionKey != null && (inventory[potionKey] ?: 0) > 0) {
+                    playerRepo.consumeItems(mapOf(potionKey to 1))
+                    gameData.potionEffects[potionKey] ?: emptyMap()
+                } else emptyMap()
 
                 val frame = simulateBoss(
                     boss              = boss,
-                    playerAttack      = levels[Skills.ATTACK]    ?: 1,
-                    playerStrength    = levels[Skills.STRENGTH]  ?: 1,
-                    playerDefence     = levels[Skills.DEFENSE]   ?: 1,
+                    playerAttack      = (levels[Skills.ATTACK]    ?: 1) + (potionBonuses["attack"]   ?: 0),
+                    playerStrength    = (levels[Skills.STRENGTH]  ?: 1) + (potionBonuses["strength"] ?: 0),
+                    playerDefence     = (levels[Skills.DEFENSE]   ?: 1) + totalDefBonus + (potionBonuses["defense"] ?: 0),
                     playerHp          = levels[Skills.HITPOINTS] ?: 1,
-                    weaponAttackBonus = weapon?.attackBonus      ?: 0,
-                    weaponStrBonus    = weapon?.strengthBonus    ?: 0,
+                    weaponAttackBonus = totalAtkBonus,
+                    weaponStrBonus    = totalStrBonus,
                 )
                 val framesJson = json.encodeToString(
                     json.serializersModule.serializer<List<SessionFrame>>(),
@@ -309,7 +390,7 @@ class CombatViewModel @Inject constructor(
             } catch (e: Exception) {
                 _extra.update { it.copy(snackbarMessage = "Could not start boss fight: ${e.message}") }
             } finally {
-                _extra.update { it.copy(startingSession = false) }
+                _extra.update { it.copy(startingSession = false, selectedPotionKey = null) }
             }
         }
     }
@@ -418,7 +499,13 @@ class CombatViewModel @Inject constructor(
         if (allFoodConsumed.isNotEmpty()) playerRepo.consumeItems(allFoodConsumed)
         if (!playerDied) {
             val combatStyle = detectCombatStyle(totalXpPerSkill)
-            questRepo.recordCombat(session.activityKey, allKillsByEnemy, allItems, combatStyle)
+            questRepo.recordCombat(
+                dungeonKey         = session.activityKey,
+                killsByEnemy       = allKillsByEnemy,
+                loot               = allItems,
+                combatStyle        = combatStyle,
+                foodConsumedTotal  = allFoodConsumed.values.sum(),
+            )
         }
         sessionRepo.deleteSession(session.sessionId)
 
@@ -438,6 +525,7 @@ class CombatViewModel @Inject constructor(
             val session = sessionRepo.getActiveSession() ?: return@launch
             if (session.skillName == "combat" || session.skillName == "boss") {
                 sessionRepo.abandonSession(session.sessionId)
+                queuedSessionStarter.startNextQueued()
             }
         }
     }
@@ -451,6 +539,16 @@ class CombatViewModel @Inject constructor(
 
     fun resultConsumed()   = _extra.update { it.copy(combatResult = null) }
     fun snackbarConsumed() = _extra.update { it.copy(snackbarMessage = null) }
+
+    fun confirmStartWithoutFood() {
+        val key = _extra.value.pendingDungeonKey ?: return
+        _extra.update { it.copy(noFoodWarningPending = false, pendingDungeonKey = null) }
+        startDungeonSession(key, bypassFoodWarning = true)
+    }
+
+    fun dismissNoFoodWarning() {
+        _extra.update { it.copy(noFoodWarningPending = false, pendingDungeonKey = null) }
+    }
 
     // ------------------------------------------------------------------
     // Helpers

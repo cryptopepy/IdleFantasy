@@ -697,6 +697,72 @@
     "xp_per_item": 75.0,
     "time_per_item": 60
   },
+  "bronze_boots": {
+    "type": "equipment",
+    "display_name": "Bronze Boots",
+    "level_required": 4,
+    "materials": {
+      "bronze_bar": 1
+    },
+    "output_quantity": 1,
+    "xp_per_item": 12.5,
+    "time_per_item": 60
+  },
+  "iron_boots": {
+    "type": "equipment",
+    "display_name": "Iron Boots",
+    "level_required": 19,
+    "materials": {
+      "iron_bar": 1
+    },
+    "output_quantity": 1,
+    "xp_per_item": 25,
+    "time_per_item": 60
+  },
+  "steel_boots": {
+    "type": "equipment",
+    "display_name": "Steel Boots",
+    "level_required": 34,
+    "materials": {
+      "steel_bar": 1
+    },
+    "output_quantity": 1,
+    "xp_per_item": 37.5,
+    "time_per_item": 60
+  },
+  "mithril_boots": {
+    "type": "equipment",
+    "display_name": "Mithril Boots",
+    "level_required": 54,
+    "materials": {
+      "mithril_bar": 1
+    },
+    "output_quantity": 1,
+    "xp_per_item": 50.0,
+    "time_per_item": 60
+  },
+  "adamantite_boots": {
+    "type": "equipment",
+    "display_name": "Adamantite Boots",
+    "level_required": 74,
+    "materials": {
+      "adamantite_bar": 1
+    },
+    "output_quantity": 1,
+    "xp_per_item": 62.5,
+    "time_per_item": 60
+  },
+  "runite_boots": {
+    "type": "equipment",
+    "display_name": "Runite Boots",
+    "level_required": 89,
+    "materials": {
+      "runite_bar": 1
+    },
+    "output_quantity": 1,
+    "xp_per_item": 75.0,
+    "time_per_item": 60
+  },
   "bronze_full_helmet": {
     "type": "equipment",
     "display_name": "Bronze Full Helmet",
@@ -1353,6 +1419,60 @@
     "materials": {
       "runite_bar": 2
     },
+    "output_quantity": 1,
+    "xp_per_item": 60,
+    "time_per_item": 60
+  },
+  "bronze_hoe": {
+    "type": "tool",
+    "display_name": "Bronze Hoe",
+    "level_required": 1,
+    "materials": { "bronze_bar": 2 },
+    "output_quantity": 1,
+    "xp_per_item": 10,
+    "time_per_item": 60
+  },
+  "iron_hoe": {
+    "type": "tool",
+    "display_name": "Iron Hoe",
+    "level_required": 15,
+    "materials": { "iron_bar": 2 },
+    "output_quantity": 1,
+    "xp_per_item": 20,
+    "time_per_item": 60
+  },
+  "steel_hoe": {
+    "type": "tool",
+    "display_name": "Steel Hoe",
+    "level_required": 30,
+    "materials": { "steel_bar": 2 },
+    "output_quantity": 1,
+    "xp_per_item": 30,
+    "time_per_item": 60
+  },
+  "mithril_hoe": {
+    "type": "tool",
+    "display_name": "Mithril Hoe",
+    "level_required": 55,
+    "materials": { "mithril_bar": 2 },
+    "output_quantity": 1,
+    "xp_per_item": 40,
+    "time_per_item": 60
+  },
+  "adamantite_hoe": {
+    "type": "tool",
+    "display_name": "Adamantite Hoe",
+    "level_required": 70,
+    "materials": { "adamantite_bar": 2 },
+    "output_quantity": 1,
+    "xp_per_item": 50,
+    "time_per_item": 60
+  },
+  "runite_hoe": {
+    "type": "tool",
+    "display_name": "Runite Hoe",
+    "level_required": 85,
+    "materials": { "runite_bar": 2 },
     "output_quantity": 1,
     "xp_per_item": 60,
     "time_per_item": 60

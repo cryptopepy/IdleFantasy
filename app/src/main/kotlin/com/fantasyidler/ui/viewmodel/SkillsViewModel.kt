@@ -60,6 +60,10 @@ data class SkillsUiState(
     val sessionResult: SessionResult? = null,
     val anySessionActive: Boolean = false,
     val queueSize: Int = 0,
+    val miningEfficiency: Float = 1.0f,
+    val woodcuttingEfficiency: Float = 1.0f,
+    val fishingEfficiency: Float = 1.0f,
+    val sessionDurationMs: Long = 0L,
 )
 
 sealed class SheetState {
@@ -109,16 +113,21 @@ class SkillsViewModel @Inject constructor(
         if (player == null) {
             extra.copy(isLoading = true, activeSession = nonCombatSession, anySessionActive = session != null)
         } else {
-            val levels: Map<String, Int> = json.decodeFromString(player.skillLevels)
-            val xp: Map<String, Long>    = json.decodeFromString(player.skillXp)
+            val levels:   Map<String, Int>     = json.decodeFromString(player.skillLevels)
+            val xp:       Map<String, Long>    = json.decodeFromString(player.skillXp)
+            val equipped: Map<String, String?> = json.decodeFromString(player.equipped)
             val flags = try { json.decodeFromString<PlayerFlags>(player.flags) } catch (_: Exception) { PlayerFlags() }
             extra.copy(
-                isLoading        = false,
-                skillLevels      = levels,
-                skillXp          = xp,
-                activeSession    = nonCombatSession,
-                anySessionActive = session != null,
-                queueSize        = flags.sessionQueue.size,
+                isLoading             = false,
+                skillLevels           = levels,
+                skillXp               = xp,
+                activeSession         = nonCombatSession,
+                anySessionActive      = session != null,
+                queueSize             = flags.sessionQueue.size,
+                miningEfficiency      = toolEfficiency(equipped[EquipSlot.PICKAXE],     EquipSlot.PICKAXE,     0),
+                woodcuttingEfficiency = toolEfficiency(equipped[EquipSlot.AXE],         EquipSlot.AXE,         0),
+                fishingEfficiency     = toolEfficiency(equipped[EquipSlot.FISHING_ROD], EquipSlot.FISHING_ROD, 0),
+                sessionDurationMs     = SkillSimulator.sessionDurationMs(levels[Skills.AGILITY] ?: 1),
             )
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SkillsUiState())
@@ -164,8 +173,13 @@ class SkillsViewModel @Inject constructor(
             }
             Skills.RUNECRAFTING -> {
                 viewModelScope.launch {
-                    val inv: Map<String, Int> = json.decodeFromString(playerRepo.getOrCreatePlayer().inventory)
-                    val essenceQty = inv["rune_essence"] ?: 0
+                    val player = playerRepo.getOrCreatePlayer()
+                    val inv: Map<String, Int> = json.decodeFromString(player.inventory)
+                    val flags = try { json.decodeFromString<PlayerFlags>(player.flags) } catch (_: Exception) { PlayerFlags() }
+                    val reservedEssence = flags.sessionQueue
+                        .filter { it.skillName == Skills.RUNECRAFTING }
+                        .sumOf { action -> (gameData.runes[action.activityKey]?.essenceCost ?: 0) * action.qty }
+                    val essenceQty = ((inv["rune_essence"] ?: 0) - reservedEssence).coerceAtLeast(0)
                     val rcLevel = state.skillLevels[Skills.RUNECRAFTING] ?: 1
                     val available = gameData.runes.filter { (_, rune) -> rune.levelRequired <= rcLevel }
                     _uiState.update { it.copy(sheetSkill = SheetState.Runecrafting(available, essenceQty)) }
@@ -174,10 +188,14 @@ class SkillsViewModel @Inject constructor(
             }
             Skills.PRAYER -> {
                 viewModelScope.launch {
-                    val inv: Map<String, Int> = json.decodeFromString(playerRepo.getOrCreatePlayer().inventory)
-                    val available = gameData.bones.filter { (key, _) -> inv.containsKey(key) }
+                    val player = playerRepo.getOrCreatePlayer()
+                    val inv: Map<String, Int> = json.decodeFromString(player.inventory)
+                    val flags = try { json.decodeFromString<PlayerFlags>(player.flags) } catch (_: Exception) { PlayerFlags() }
+                    val reserved = reservedQty(flags.sessionQueue, Skills.PRAYER)
+                    val effectiveCounts = inv.mapValues { (k, v) -> v - (reserved[k] ?: 0) }
+                    val available = gameData.bones.filter { (key, _) -> (effectiveCounts[key] ?: 0) > 0 }
                     _uiState.update {
-                        it.copy(sheetSkill = SheetState.Prayer(available, inv.filterKeys { k -> k in gameData.bones }))
+                        it.copy(sheetSkill = SheetState.Prayer(available, effectiveCounts.filterKeys { k -> k in gameData.bones }))
                     }
                 }
                 return
@@ -185,7 +203,8 @@ class SkillsViewModel @Inject constructor(
             Skills.SMITHING,
             Skills.COOKING,
             Skills.FLETCHING,
-            Skills.CRAFTING  -> SheetState.Crafting(skillKey)
+            Skills.CRAFTING,
+            Skills.HERBLORE  -> SheetState.Crafting(skillKey)
             else             -> SheetState.ComingSoon
         }
         _uiState.update { it.copy(sheetSkill = sheet) }
@@ -259,15 +278,40 @@ class SkillsViewModel @Inject constructor(
         val xpMap:  Map<String, Long> = json.decodeFromString(player.skillXp)
 
         SkillSimulator.simulateGathering(
-            skillData    = gameData.firemakingSkillData,
-            startXp      = xpMap[Skills.FIREMAKING] ?: 0L,
-            agilityLevel = levels[Skills.AGILITY] ?: 1,
-            petBoostPct  = petBoostFor(player.pets, Skills.FIREMAKING),
+            skillData          = gameData.firemakingSkillData,
+            startXp            = xpMap[Skills.FIREMAKING] ?: 0L,
+            agilityLevel       = levels[Skills.AGILITY] ?: 1,
+            petBoostPct        = petBoostFor(player.pets, Skills.FIREMAKING),
+            forcedDropPerFrame = ashForLog(logKey),
         )
+    }
+
+    /** Maps a log key to the ash variant produced by burning it. Falls back to base ashes. */
+    private fun ashForLog(logKey: String): String = when (logKey) {
+        "oak_log"     -> "oak_ashes"
+        "willow_log"  -> "willow_ashes"
+        "maple_log"   -> "maple_ashes"
+        "yew_log"     -> "yew_ashes"
+        "magic_log"   -> "magic_ashes"
+        "redwood_log" -> "redwood_ashes"
+        else          -> "ashes"
     }
 
     fun startRunecraftingSession(runeKey: String, qty: Int) {
         viewModelScope.launch {
+            val runeData = gameData.runes[runeKey] ?: return@launch
+            val player   = playerRepo.getOrCreatePlayer()
+            val inv: Map<String, Int> = json.decodeFromString(player.inventory)
+            val flags    = try { json.decodeFromString<PlayerFlags>(player.flags) } catch (_: Exception) { PlayerFlags() }
+            val reservedEssence = flags.sessionQueue
+                .filter { it.skillName == Skills.RUNECRAFTING }
+                .sumOf { action -> (gameData.runes[action.activityKey]?.essenceCost ?: 0) * action.qty }
+            val availableEssence = (inv["rune_essence"] ?: 0) - reservedEssence
+            if (availableEssence < runeData.essenceCost * qty) {
+                _uiState.update { it.copy(snackbarMessage = "Not enough Rune Essence") }
+                return@launch
+            }
+
             if (sessionRepo.getActiveSession() != null) {
                 val actDisplay = runeKey.replace('_', ' ').replaceFirstChar { it.uppercase() }
                 val enqueued = playerRepo.enqueueAction(
@@ -282,16 +326,8 @@ class SkillsViewModel @Inject constructor(
                 return@launch
             }
 
-            val runeData = gameData.runes[runeKey] ?: return@launch
-            val consumed = playerRepo.consumeMaterials(mapOf("rune_essence" to runeData.essenceCost), qty)
-            if (!consumed) {
-                _uiState.update { it.copy(snackbarMessage = "Not enough Rune Essence") }
-                return@launch
-            }
-
             _uiState.update { it.copy(startingSession = true, sheetSkill = null) }
             try {
-                val player   = playerRepo.getOrCreatePlayer()
                 val xpMap:   Map<String, Long> = json.decodeFromString(player.skillXp)
                 val levels:  Map<String, Int>  = json.decodeFromString(player.skillLevels)
                 val agilityLevel = levels[Skills.AGILITY] ?: 1
@@ -343,30 +379,32 @@ class SkillsViewModel @Inject constructor(
 
     fun startPrayerSession(boneKey: String, qty: Int) {
         viewModelScope.launch {
+            val bone   = gameData.bones[boneKey] ?: return@launch
+            val player = playerRepo.getOrCreatePlayer()
+            val inv: Map<String, Int> = json.decodeFromString(player.inventory)
+            val flags  = try { json.decodeFromString<PlayerFlags>(player.flags) } catch (_: Exception) { PlayerFlags() }
+            val alreadyQueued = reservedQty(flags.sessionQueue, Skills.PRAYER)[boneKey] ?: 0
+            val available = (inv[boneKey] ?: 0) - alreadyQueued
+            if (available < qty) {
+                _uiState.update { it.copy(snackbarMessage = "Not enough ${bone.displayName}") }
+                return@launch
+            }
+
             if (sessionRepo.getActiveSession() != null) {
-                val bone = gameData.bones[boneKey]
                 val enqueued = playerRepo.enqueueAction(
                     QueuedAction(Skills.PRAYER, boneKey, "Prayer", qty = qty)
                 )
                 _uiState.update {
                     it.copy(
-                        snackbarMessage = if (enqueued) "Added to queue: Prayer — ${bone?.displayName ?: boneKey}." else "Queue is full (3/3).",
+                        snackbarMessage = if (enqueued) "Added to queue: Prayer — ${bone.displayName}." else "Queue is full (3/3).",
                         sheetSkill = null,
                     )
                 }
                 return@launch
             }
 
-            val bone = gameData.bones[boneKey] ?: return@launch
-            val consumed = playerRepo.consumeMaterials(mapOf(boneKey to 1), qty)
-            if (!consumed) {
-                _uiState.update { it.copy(snackbarMessage = "Not enough ${bone.displayName}") }
-                return@launch
-            }
-
             _uiState.update { it.copy(startingSession = true, sheetSkill = null) }
             try {
-                val player   = playerRepo.getOrCreatePlayer()
                 val xpMap:   Map<String, Long> = json.decodeFromString(player.skillXp)
                 val levels:  Map<String, Int>  = json.decodeFromString(player.skillLevels)
                 var currentXp = xpMap[Skills.PRAYER] ?: 0L
@@ -517,6 +555,25 @@ class SkillsViewModel @Inject constructor(
                 Skills.PRAYER      -> questRepo.recordBuried(frames.sumOf { it.kills })
             }
 
+            // Consume input materials at collect time (mirrors HomeViewModel)
+            when (session.skillName) {
+                Skills.PRAYER -> playerRepo.consumeItems(mapOf(session.activityKey to frames.size))
+                Skills.RUNECRAFTING -> {
+                    val rune = gameData.runes[session.activityKey]
+                    if (rune != null) playerRepo.consumeItems(mapOf("rune_essence" to rune.essenceCost * frames.size))
+                }
+                in craftingSkills -> {
+                    val mats = when (session.skillName) {
+                        Skills.SMITHING  -> gameData.smithingRecipes[session.activityKey]?.materials
+                        Skills.COOKING   -> gameData.cookingRecipes[session.activityKey]?.let { mapOf(it.rawItem to 1) }
+                        Skills.FLETCHING -> gameData.fletchingRecipes[session.activityKey]?.materials
+                        Skills.CRAFTING  -> gameData.craftingRecipes[session.activityKey]?.materials
+                        else             -> null
+                    }
+                    if (mats != null) playerRepo.consumeItems(mats.mapValues { (_, needed) -> needed * frames.size })
+                }
+            }
+
             // Handle pet drops
             var petMessage: String? = null
             for ((petId, _) in petDrops) {
@@ -550,6 +607,7 @@ class SkillsViewModel @Inject constructor(
         viewModelScope.launch {
             val session = sessionRepo.getActiveSession() ?: return@launch
             sessionRepo.abandonSession(session.sessionId)
+            queuedSessionStarter.startNextQueued()
         }
     }
 
@@ -565,6 +623,12 @@ class SkillsViewModel @Inject constructor(
     // ------------------------------------------------------------------
     // Helpers
     // ------------------------------------------------------------------
+
+    /** Sums qty already committed to the queue for each activityKey under [skillName]. */
+    private fun reservedQty(queue: List<QueuedAction>, skillName: String): Map<String, Int> =
+        queue.filter { it.skillName == skillName }
+             .groupingBy { it.activityKey }
+             .fold(0) { acc, a -> acc + a.qty }
 
     private val TOOL_TIERS = listOf(1, 15, 30, 55, 70, 85)
 
